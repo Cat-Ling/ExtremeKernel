@@ -34,7 +34,7 @@ while [[ $# -gt 0 ]]; do
             RECOVERY_OPTION="$2"
             shift 2
             ;;
-        *)\
+        *)
             unset_flags
             exit 1
             ;;
@@ -44,35 +44,30 @@ done
 echo "Preparing the build environment..."
 
 pushd $(dirname "$0") > /dev/null
-CORES=`cat /proc/cpuinfo | grep -c processor`
+CORES=$(nproc --all 2>/dev/null || cat /proc/cpuinfo | grep -c processor)
 
 # Define toolchain variables
-CLANG_DIR=$PWD/toolchain/neutron_18
-PATH=$CLANG_DIR/bin:$PATH
+CLANG_DIR=$PWD/toolchain/clang-r547379
+export PATH=$CLANG_DIR/bin:$PATH
 
 # Check if toolchain exists
-if [ ! -f "$CLANG_DIR/bin/clang-18" ]; then
+if [ ! -f "$CLANG_DIR/bin/clang" ]; then
     echo "-----------------------------------------------"
-    echo "Toolchain not found! Downloading..."
+    echo "Toolchain not found! Downloading Google Clang r547379..."
     echo "-----------------------------------------------"
     rm -rf $CLANG_DIR
     mkdir -p $CLANG_DIR
-    pushd toolchain/neutron_18 > /dev/null
-    bash <(curl -s "https://raw.githubusercontent.com/Neutron-Toolchains/antman/main/antman") -S=05012024
-    echo "-----------------------------------------------"
-    echo "Patching toolchain..."
-    echo "-----------------------------------------------"
-    bash <(curl -s "https://raw.githubusercontent.com/Neutron-Toolchains/antman/main/antman") --patch=glibc
-    echo "-----------------------------------------------"
+    pushd $CLANG_DIR > /dev/null
+    curl -L "https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/main/clang-r547379.tar.gz" -o clang-r547379.tar.gz
+    tar -xzf clang-r547379.tar.gz
+    rm -f clang-r547379.tar.gz
+    chmod +x bin/* 2>/dev/null || true
     echo "Cleaning up..."
     popd > /dev/null
 fi
 
 MAKE_ARGS="
-LLVM=1 \
-LLVM_IAS=1 \
-ARCH=arm64 \
-O=out
+LLVM=1 LLVM_IAS=1 ARCH=arm64 O=out
 "
 
 # Define specific variables
@@ -118,16 +113,20 @@ d2xks)
     exit
 esac
 
+if [[ "$MODEL" == "d2xks" ]]; then
+    MODEL=d2x
+fi
+
 if [[ "$RECOVERY_OPTION" == "y" ]]; then
     RECOVERY=recovery.config
     KSU_OPTION=n
 fi
 
-if [ -z $KSU_OPTION ]; then
+if [ -z "$KSU_OPTION" ]; then
     read -p "Include KernelSU (y/N): " KSU_OPTION
 fi
 
-if [[ "$KSU_OPTION" == "y" ]]; then
+if [[ "$KSU_OPTION" == "y" || "$KSU_OPTION" == "Y" ]]; then
     KSU=ksu.config
 fi
 
@@ -137,22 +136,7 @@ mkdir -p build/out/$MODEL/zip/META-INF/com/google/android
 
 # Build kernel image
 echo "-----------------------------------------------"
-echo "Defconfig: "$KERNEL_DEFCONFIG""
-
-if [ -z "$KSU" ]; then
-    echo "KSU: No"
-else
-    echo "KSU: Yes"
-fi
-
-if [ -z "$RECOVERY" ]; then
-    echo "Recovery: N"
-else
-    echo "Recovery: Y"
-fi
-
-echo "-----------------------------------------------"
-echo "Building kernel using "$KERNEL_DEFCONFIG""
+echo "Building kernel for $MODEL (SOC: $SOC, KSU: ${KSU:-none}, Recovery: ${RECOVERY:-none})..."
 echo "Generating configuration file..."
 echo "-----------------------------------------------"
 make ${MAKE_ARGS} -j$CORES exynos9820_defconfig $MODEL.config $KSU $RECOVERY || abort
@@ -171,8 +155,8 @@ BASE=0x10000000
 CMDLINE='loop.max_part=7'
 HASHTYPE=sha1
 HEADER_VERSION=1
-OS_PATCH_LEVEL=2025-01
-OS_VERSION=14.0.0
+OS_PATCH_LEVEL=2025-08
+OS_VERSION=16.0.0
 PAGESIZE=2048
 RAMDISK=build/out/$MODEL/ramdisk.cpio.gz
 OUTPUT_FILE=build/out/$MODEL/boot.img
@@ -214,11 +198,7 @@ if [ -z "$RECOVERY" ]; then
     # Create boot image
     echo "Creating boot image..."
     echo "-----------------------------------------------"
-    ./toolchain/mkbootimg --base $BASE --board $BOARD --cmdline "$CMDLINE" --hashtype $HASHTYPE \
-    --header_version $HEADER_VERSION --kernel $KERNEL_PATH --kernel_offset $KERNEL_OFFSET \
-    --os_patch_level $OS_PATCH_LEVEL --os_version $OS_VERSION --pagesize $PAGESIZE \
-    --ramdisk $RAMDISK --ramdisk_offset $RAMDISK_OFFSET --second_offset $SECOND_OFFSET \
-    --tags_offset $TAGS_OFFSET -o $OUTPUT_FILE || abort
+    ./toolchain/mkbootimg --base $BASE --board $BOARD --cmdline "$CMDLINE" --hashtype $HASHTYPE     --header_version $HEADER_VERSION --kernel $KERNEL_PATH --kernel_offset $KERNEL_OFFSET     --os_patch_level $OS_PATCH_LEVEL --os_version $OS_VERSION --pagesize $PAGESIZE     --ramdisk $RAMDISK --ramdisk_offset $RAMDISK_OFFSET --second_offset $SECOND_OFFSET     --tags_offset $TAGS_OFFSET -o $OUTPUT_FILE || abort
 
     # Build zip
     echo "Building zip..."
