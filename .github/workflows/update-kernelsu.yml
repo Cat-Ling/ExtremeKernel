@@ -132,7 +132,7 @@ jobs:
           echo "Pushed updated submodule commit to origin/${TARGET_BRANCH}"
 
       - name: Trigger Kernel Build Workflow
-        if: ${{ steps.update_submodule.outputs.has_update == 'true' && (github.event.inputs.trigger_build == 'true' || github.event_name == "schedule") }}
+        if: ${{ steps.update_submodule.outputs.has_update == 'true' && (github.event.inputs.trigger_build == 'true' || github.event_name == 'schedule') }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TARGET_BRANCH: ${{ github.event.inputs.target_branch || 'sixteen' }}
