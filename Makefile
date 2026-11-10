@@ -697,10 +697,12 @@ export CFLAGS_GCOV
 # ar/cc/ld-* macros return correct values.
 ifdef CONFIG_LTO_CLANG
 ifneq ($(ld-name),lld)
+ifeq ($(LLVM),)
 # use GNU gold with LLVMgold for LTO linking, and LD for vmlinux_link
 LDFINAL_vmlinux := $(LD)
 LD		:= $(LDGOLD)
 LDFLAGS		+= -plugin LLVMgold.so
+endif
 endif
 # use llvm-ar for building symbol tables from IR files, and llvm-dis instead
 # of objdump for processing symbol versions and exports
