@@ -44,7 +44,7 @@ jobs:
       - name: Checkout ExtremeKernel
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.inputs.target_branch || "sixteen" }}
+          ref: ${{ github.event.inputs.target_branch || 'sixteen' }}
           submodules: "recursive"
           fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
@@ -57,7 +57,7 @@ jobs:
       - name: Determine current and upstream KernelSU-Next commit
         id: check_ksu
         env:
-          KSU_BRANCH: ${{ github.event.inputs.ksu_branch || "legacy" }}
+          KSU_BRANCH: ${{ github.event.inputs.ksu_branch || 'legacy' }}
         run: |
           CURRENT_SHA=$(git submodule status KernelSU-Next | awk "{print $1}" | tr -d "+-U")
           echo "CURRENT_SHA: ${CURRENT_SHA}"
@@ -86,7 +86,7 @@ jobs:
       - name: Update submodule and tracking configuration
         id: update_submodule
         env:
-          KSU_BRANCH: ${{ github.event.inputs.ksu_branch || "legacy" }}
+          KSU_BRANCH: ${{ github.event.inputs.ksu_branch || 'legacy' }}
           LATEST_SHA: ${{ steps.check_ksu.outputs.latest_sha }}
         run: |
           cd KernelSU-Next
@@ -106,10 +106,10 @@ jobs:
 
       - name: Commit and push update
         id: commit_step
-        if: ${{ steps.update_submodule.outputs.has_update == "true" }}
+        if: ${{ steps.update_submodule.outputs.has_update == 'true' }}
         env:
-          TARGET_BRANCH: ${{ github.event.inputs.target_branch || "sixteen" }}
-          KSU_BRANCH: ${{ github.event.inputs.ksu_branch || "legacy" }}
+          TARGET_BRANCH: ${{ github.event.inputs.target_branch || 'sixteen' }}
+          KSU_BRANCH: ${{ github.event.inputs.ksu_branch || 'legacy' }}
           CURRENT_SHA: ${{ steps.check_ksu.outputs.current_sha }}
           LATEST_SHA: ${{ steps.check_ksu.outputs.latest_sha }}
           KSU_VER: ${{ steps.check_ksu.outputs.ksu_ver }}
@@ -132,11 +132,11 @@ jobs:
           echo "Pushed updated submodule commit to origin/${TARGET_BRANCH}"
 
       - name: Trigger Kernel Build Workflow
-        if: ${{ steps.update_submodule.outputs.has_update == "true" && (github.event.inputs.trigger_build == "true" || github.event_name == "schedule") }}
+        if: ${{ steps.update_submodule.outputs.has_update == 'true' && (github.event.inputs.trigger_build == 'true' || github.event_name == "schedule") }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TARGET_BRANCH: ${{ github.event.inputs.target_branch || "sixteen" }}
-          MODEL: ${{ github.event.inputs.build_model || "d2x" }}
+          TARGET_BRANCH: ${{ github.event.inputs.target_branch || 'sixteen' }}
+          MODEL: ${{ github.event.inputs.build_model || 'd2x' }}
         run: |
           echo "Triggering build.yml on branch ${TARGET_BRANCH} for model ${MODEL}..."
           gh workflow run build.yml \
