@@ -9,12 +9,20 @@ on:
       target_branch:
         description: "Target branch of ExtremeKernel to update"
         required: true
-        default: "sixteen"
+        default: 'sixteen'
         type: string
+      track_mode:
+        description: "Tracking mode: 'tag' (latest release tag v*-legacy) or 'branch' (bleeding-edge commit on legacy branch)"
+        required: true
+        default: 'tag'
+        type: choice
+        options:
+          - tag
+          - branch
       ksu_branch:
         description: "Upstream KernelSU-Next branch to track"
         required: true
-        default: "legacy"
+        default: 'legacy'
         type: string
       trigger_build:
         description: "Trigger build.yml after updating if new version found"
@@ -24,7 +32,7 @@ on:
       build_model:
         description: "Model to build if triggered"
         required: true
-        default: "d2x"
+        default: 'd2x'
         type: choice
         options:
           - d2x
@@ -57,18 +65,36 @@ jobs:
       - name: Determine current and upstream KernelSU-Next commit
         id: check_ksu
         env:
+          TRACK_MODE: ${{ github.event.inputs.track_mode || 'tag' }}
           KSU_BRANCH: ${{ github.event.inputs.ksu_branch || 'legacy' }}
         run: |
-          CURRENT_SHA=$(git submodule status KernelSU-Next | awk "{print $1}" | tr -d "+-U")
+          CURRENT_SHA=$(git submodule status KernelSU-Next | awk '{print $1}' | tr -d '+-U')
           echo "CURRENT_SHA: ${CURRENT_SHA}"
           echo "current_sha=${CURRENT_SHA}" >> "$GITHUB_OUTPUT"
 
           cd KernelSU-Next
           git remote set-url origin https://github.com/KernelSU-Next/KernelSU-Next.git
-          git fetch origin "${KSU_BRANCH}" --unshallow 2>/dev/null || git fetch origin "${KSU_BRANCH}"
-          LATEST_SHA=$(git rev-parse "origin/${KSU_BRANCH}")
+          git fetch origin "${KSU_BRANCH}" --tags --unshallow 2>/dev/null || git fetch origin "${KSU_BRANCH}" --tags
+
+          if [ "${TRACK_MODE}" = "tag" ]; then
+            RESOLVED_TAG=$(git tag -l "v*-legacy" | sort -V | tail -n 1)
+            if [ -z "${RESOLVED_TAG}" ]; then
+              echo "Notice: No v*-legacy tag found, falling back to branch ${KSU_BRANCH}"
+              LATEST_SHA=$(git rev-parse "origin/${KSU_BRANCH}")
+              TAG_NAME=""
+            else
+              echo "Resolved latest release tag: ${RESOLVED_TAG}"
+              LATEST_SHA=$(git rev-list -n 1 "${RESOLVED_TAG}")
+              TAG_NAME="${RESOLVED_TAG}"
+            fi
+          else
+            LATEST_SHA=$(git rev-parse "origin/${KSU_BRANCH}")
+            TAG_NAME=$(git describe --tags --exact-match "${LATEST_SHA}" 2>/dev/null || git describe --tags --abbrev=0 "${LATEST_SHA}" 2>/dev/null || echo "")
+          fi
+
           echo "LATEST_SHA: ${LATEST_SHA}"
           echo "latest_sha=${LATEST_SHA}" >> "$GITHUB_OUTPUT"
+          echo "tag_name=${TAG_NAME}" >> "$GITHUB_OUTPUT"
 
           # Calculate commit count on upstream legacy branch
           KSU_COUNT=$(git rev-list --count "${LATEST_SHA}")
@@ -76,11 +102,6 @@ jobs:
           KSU_VER=$((30000 + KSU_COUNT + 289))
           echo "Calculated KSU_VERSION: ${KSU_VER}"
           echo "ksu_ver=${KSU_VER}" >> "$GITHUB_OUTPUT"
-
-          # Check if there is an exact tag
-          TAG_NAME=$(git describe --tags --exact-match "${LATEST_SHA}" 2>/dev/null || git describe --tags --abbrev=0 "${LATEST_SHA}" 2>/dev/null || echo "")
-          echo "tag_name=${TAG_NAME}" >> "$GITHUB_OUTPUT"
-          echo "TAG_NAME: ${TAG_NAME}"
           cd ..
 
       - name: Update submodule and tracking configuration
@@ -109,6 +130,7 @@ jobs:
         if: ${{ steps.update_submodule.outputs.has_update == 'true' }}
         env:
           TARGET_BRANCH: ${{ github.event.inputs.target_branch || 'sixteen' }}
+          TRACK_MODE: ${{ github.event.inputs.track_mode || 'tag' }}
           KSU_BRANCH: ${{ github.event.inputs.ksu_branch || 'legacy' }}
           CURRENT_SHA: ${{ steps.check_ksu.outputs.current_sha }}
           LATEST_SHA: ${{ steps.check_ksu.outputs.latest_sha }}
@@ -123,6 +145,7 @@ jobs:
           fi
 
           git commit -m "KernelSU-Next: update non-GKI submodule to ${LATEST_SHORT}${TAG_DISPLAY}" \
+                     -m "Mode: ${TRACK_MODE}" \
                      -m "Branch: ${KSU_BRANCH}" \
                      -m "Calculated driver version: ${KSU_VER}" \
                      -m "Previous commit: ${PREV_SHORT}" \
