@@ -1,0 +1,144 @@
+name: Auto-update KernelSU-Next (non-GKI)
+
+on:
+  schedule:
+    # Run daily at 03:00 UTC
+    - cron: "0 3 * * *"
+  workflow_dispatch:
+    inputs:
+      target_branch:
+        description: "Target branch of ExtremeKernel to update"
+        required: true
+        default: "sixteen"
+        type: string
+      ksu_branch:
+        description: "Upstream KernelSU-Next branch to track"
+        required: true
+        default: "legacy"
+        type: string
+      trigger_build:
+        description: "Trigger build.yml after updating if new version found"
+        required: true
+        default: true
+        type: boolean
+      build_model:
+        description: "Model to build if triggered"
+        required: true
+        default: "d2x"
+        type: choice
+        options:
+          - d2x
+          - all
+          - d1
+          - d2s
+          - d1xks
+          - d2xks
+
+jobs:
+  check-and-update:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      actions: write
+    steps:
+      - name: Checkout ExtremeKernel
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.target_branch || "sixteen" }}
+          submodules: "recursive"
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Configure Git
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Determine current and upstream KernelSU-Next commit
+        id: check_ksu
+        env:
+          KSU_BRANCH: ${{ github.event.inputs.ksu_branch || "legacy" }}
+        run: |
+          CURRENT_SHA=$(git submodule status KernelSU-Next | awk "{print $1}" | tr -d "+-U")
+          echo "CURRENT_SHA: ${CURRENT_SHA}"
+          echo "current_sha=${CURRENT_SHA}" >> "$GITHUB_OUTPUT"
+
+          cd KernelSU-Next
+          git remote set-url origin https://github.com/KernelSU-Next/KernelSU-Next.git
+          git fetch origin "${KSU_BRANCH}" --unshallow 2>/dev/null || git fetch origin "${KSU_BRANCH}"
+          LATEST_SHA=$(git rev-parse "origin/${KSU_BRANCH}")
+          echo "LATEST_SHA: ${LATEST_SHA}"
+          echo "latest_sha=${LATEST_SHA}" >> "$GITHUB_OUTPUT"
+
+          # Calculate commit count on upstream legacy branch
+          KSU_COUNT=$(git rev-list --count "${LATEST_SHA}")
+          # KernelSU-Next legacy version formula: 30000 + count + 289
+          KSU_VER=$((30000 + KSU_COUNT + 289))
+          echo "Calculated KSU_VERSION: ${KSU_VER}"
+          echo "ksu_ver=${KSU_VER}" >> "$GITHUB_OUTPUT"
+
+          # Check if there is an exact tag
+          TAG_NAME=$(git describe --tags --exact-match "${LATEST_SHA}" 2>/dev/null || git describe --tags --abbrev=0 "${LATEST_SHA}" 2>/dev/null || echo "")
+          echo "tag_name=${TAG_NAME}" >> "$GITHUB_OUTPUT"
+          echo "TAG_NAME: ${TAG_NAME}"
+          cd ..
+
+      - name: Update submodule and tracking configuration
+        id: update_submodule
+        env:
+          KSU_BRANCH: ${{ github.event.inputs.ksu_branch || "legacy" }}
+          LATEST_SHA: ${{ steps.check_ksu.outputs.latest_sha }}
+        run: |
+          cd KernelSU-Next
+          git checkout -q "${LATEST_SHA}"
+          cd ..
+
+          git config -f .gitmodules submodule.KernelSU-Next.branch "${KSU_BRANCH}"
+          git add .gitmodules KernelSU-Next
+
+          if git diff --cached --quiet; then
+            echo "No change in submodule commit. Already up-to-date."
+            echo "has_update=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "Submodule updated to ${LATEST_SHA}."
+            echo "has_update=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Commit and push update
+        id: commit_step
+        if: ${{ steps.update_submodule.outputs.has_update == "true" }}
+        env:
+          TARGET_BRANCH: ${{ github.event.inputs.target_branch || "sixteen" }}
+          KSU_BRANCH: ${{ github.event.inputs.ksu_branch || "legacy" }}
+          CURRENT_SHA: ${{ steps.check_ksu.outputs.current_sha }}
+          LATEST_SHA: ${{ steps.check_ksu.outputs.latest_sha }}
+          KSU_VER: ${{ steps.check_ksu.outputs.ksu_ver }}
+          TAG_NAME: ${{ steps.check_ksu.outputs.tag_name }}
+        run: |
+          PREV_SHORT=$(echo "${CURRENT_SHA}" | cut -c1-8)
+          LATEST_SHORT=$(echo "${LATEST_SHA}" | cut -c1-8)
+          TAG_DISPLAY=""
+          if [ -n "${TAG_NAME}" ]; then
+            TAG_DISPLAY=" (${TAG_NAME})"
+          fi
+
+          git commit -m "KernelSU-Next: update non-GKI submodule to ${LATEST_SHORT}${TAG_DISPLAY}" \
+                     -m "Branch: ${KSU_BRANCH}" \
+                     -m "Calculated driver version: ${KSU_VER}" \
+                     -m "Previous commit: ${PREV_SHORT}" \
+                     -m "Upstream commit: https://github.com/KernelSU-Next/KernelSU-Next/commit/${LATEST_SHA}"
+
+          git push origin "${TARGET_BRANCH}"
+          echo "Pushed updated submodule commit to origin/${TARGET_BRANCH}"
+
+      - name: Trigger Kernel Build Workflow
+        if: ${{ steps.update_submodule.outputs.has_update == "true" && (github.event.inputs.trigger_build == "true" || github.event_name == "schedule") }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TARGET_BRANCH: ${{ github.event.inputs.target_branch || "sixteen" }}
+          MODEL: ${{ github.event.inputs.build_model || "d2x" }}
+        run: |
+          echo "Triggering build.yml on branch ${TARGET_BRANCH} for model ${MODEL}..."
+          gh workflow run build.yml \
+            --ref "${TARGET_BRANCH}" \
+            -f model="${MODEL}" || echo "Notice: workflow dispatch attempted with GITHUB_TOKEN."
